@@ -15,3 +15,7 @@ This repo builds a production-style RAG system step by step, starting with data 
 
 ## Next Step
 Populate the corpus list in docs/corpus_list.md with 20-30 public insurance documents.
+
+## Phase 1: Retrieval Baseline
+1. Build embeddings + FAISS index from chunks.
+2. Query the index to validate retrieval quality.
