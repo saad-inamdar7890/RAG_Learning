@@ -52,7 +52,7 @@ def write_jsonl(doc_id: str, pdf_path: str, pages: List[dict]) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Parse PDFs into page-wise JSONL.")
-    parser.add_argument("--limit", type=int, default=5, help="Number of PDFs to parse")
+    parser.add_argument("--limit", type=int, default=0, help="Number of PDFs to parse (0 = all)")
     args = parser.parse_args()
 
     if not os.path.isdir(RAW_DIR):
@@ -64,7 +64,9 @@ def main() -> int:
         print("No PDFs found in data/raw.")
         return 0
 
-    for pdf_path in pdfs[: args.limit]:
+    target = pdfs if args.limit == 0 else pdfs[: args.limit]
+
+    for pdf_path in target:
         doc_id = doc_id_from_filename(pdf_path)
         print(f"Parsing {doc_id}: {os.path.basename(pdf_path)}")
         pages = parse_pdf(pdf_path)
