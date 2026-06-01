@@ -19,3 +19,7 @@ Populate the corpus list in docs/corpus_list.md with 20-30 public insurance docu
 ## Phase 1: Retrieval Baseline
 1. Build embeddings + FAISS index from chunks.
 2. Query the index to validate retrieval quality.
+
+## Phase 1: Minimal RAG Answering
+1. Use OpenAI to answer with citations from retrieved chunks.
+2. Use Ollama to answer offline with citations from retrieved chunks.
