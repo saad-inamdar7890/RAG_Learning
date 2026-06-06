@@ -91,6 +91,8 @@ def call_ollama(prompt: str, model: str, host: str) -> str:
         "options": {"temperature": 0.2},
     }
     response = requests.post(url, json=payload, timeout=120)
+    if response.status_code != 200:
+        print(f"Ollama Error: {response.text}")
     response.raise_for_status()
     data = response.json()
     return data.get("response", "").strip()
@@ -121,6 +123,11 @@ def main() -> int:
         default=10,
         help="Top-k for reranking candidates",
     )
+    parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Use local HF cache only (no downloads)",
+    )
     parser.add_argument("--model", default="llama3.1:8b", help="Ollama model")
     parser.add_argument(
         "--host", default="http://localhost:11434", help="Ollama host URL"
@@ -136,6 +143,10 @@ def main() -> int:
     if not os.path.exists(index_path) or not os.path.exists(meta_path):
         print("Index or metadata not found. Run build_faiss_index.py first.")
         return 1
+
+    if args.offline:
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
     model_name = "sentence-transformers/all-MiniLM-L6-v2"
     if os.path.exists(info_path):
