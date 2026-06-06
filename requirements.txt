@@ -2,3 +2,5 @@ numpy
 sentence-transformers
 faiss-cpu
 requests
+fastapi
+uvicorn
