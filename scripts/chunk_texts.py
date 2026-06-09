@@ -2,7 +2,9 @@ import argparse
 import glob
 import json
 import os
+import csv
 from typing import List, Tuple
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 CLEAN_DIR = os.path.join(BASE_DIR, "data", "clean")
@@ -24,21 +26,18 @@ def normalize_whitespace(text: str) -> str:
     return " ".join(text.split())
 
 
-def chunk_text(text: str, size: int, overlap: int) -> List[Tuple[int, int, str]]:
-    chunks = []
-    if size <= 0:
-        return chunks
-
-    start = 0
-    n = len(text)
-    while start < n:
-        end = min(start + size, n)
-        chunk = text[start:end]
-        chunks.append((start, end, chunk))
-        if end == n:
-            break
-        start = max(0, end - overlap)
-    return chunks
+def load_document_titles() -> dict:
+    titles = {}
+    csv_path = os.path.join(BASE_DIR, "data", "lists", "corpus_status.csv")
+    if not os.path.exists(csv_path):
+        return titles
+    with open(csv_path, "r", encoding="utf-8") as f:
+        # Read manually in case of minor formatting issues or use csv
+        reader = csv.DictReader(f)
+        for row in reader:
+            if "doc_id" in row and "title" in row:
+                titles[row["doc_id"]] = row["title"]
+    return titles
 
 
 def write_chunks(doc_id: str, chunks: List[dict]) -> str:
@@ -65,6 +64,9 @@ def main() -> int:
         print("No parsed JSONL files found in data/clean.")
         return 0
 
+    titles = load_document_titles()
+    splitter = RecursiveCharacterTextSplitter(chunk_size=args.size, chunk_overlap=args.overlap)
+
     for path in files:
         pages = load_pages(path)
         if not pages:
@@ -72,6 +74,8 @@ def main() -> int:
             continue
 
         doc_id = pages[0].get("doc_id") or os.path.basename(path).split("__", 1)[0]
+        doc_title = titles.get(doc_id, doc_id)
+        
         chunk_rows = []
         chunk_index = 0
         for page in pages:
@@ -79,7 +83,16 @@ def main() -> int:
             if not text:
                 continue
             page_number = page.get("page_number")
-            for start_char, end_char, chunk in chunk_text(text, args.size, args.overlap):
+            
+            # Semantic chunking
+            chunks = splitter.split_text(text)
+            
+            # Metadata enrichment
+            start_char = 0
+            for chunk in chunks:
+                end_char = start_char + len(chunk)
+                enriched_text = f"Document: {doc_title} | Page: {page_number}\n{chunk}"
+                
                 row = {
                     "chunk_id": f"{doc_id}::p{page_number}::c{chunk_index:05d}",
                     "doc_id": doc_id,
@@ -87,10 +100,11 @@ def main() -> int:
                     "page_number": page_number,
                     "start_char": start_char,
                     "end_char": end_char,
-                    "text": chunk,
+                    "text": enriched_text,
                 }
                 chunk_rows.append(row)
                 chunk_index += 1
+                start_char = end_char  # Approximate offset for legacy compat
 
         out_path = write_chunks(doc_id, chunk_rows)
         print(f"Wrote {out_path} ({len(chunk_rows)} chunks)")
