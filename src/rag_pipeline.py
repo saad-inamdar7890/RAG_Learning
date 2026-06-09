@@ -134,11 +134,11 @@ class RAGPipeline:
     def generate_answer(self, query: str, context_chunks: List[dict]) -> str:
         context = build_context(context_chunks)
         prompt = (
-            "You are an assistant that answers questions using ONLY the provided context. "
-            "Cite sources using bracketed numbers like [1], [2]. If the answer is not "
-            "in the context, say you don't know.\n\n"
+            "You are a strict enterprise AI assistant. You MUST answer the user's question using ONLY the provided context.\n"
+            "CRITICAL: You MUST cite your sources for every claim using bracketed numbers like [1] or [2].\n"
+            "If the answer is not in the context, you must reply: 'I cannot answer this based on the provided documents.'\n\n"
             f"Question: {query}\n\nContext:\n{context}\n\n"
-            "Answer with citations."
+            "Answer with mandatory citations:"
         )
         
         url = self.ollama_host.rstrip("/") + "/api/generate"
