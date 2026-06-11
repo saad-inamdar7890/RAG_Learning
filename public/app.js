@@ -1,3 +1,20 @@
+// ── Tab switching ──────────────────────────────────────────────────────────
+function showTab(tab) {
+    document.getElementById('tab-chat').classList.toggle('hidden', tab !== 'chat');
+    document.getElementById('tab-eval').classList.toggle('hidden', tab !== 'eval');
+    document.getElementById('nav-chat').classList.toggle('active', tab === 'chat');
+    document.getElementById('nav-eval').classList.toggle('active', tab === 'eval');
+    document.getElementById('history-panel').classList.toggle('hidden', tab !== 'chat');
+}
+
+// ── Strategy card radio sync ──────────────────────────────────────────────
+document.querySelectorAll('.strategy-card').forEach(card => {
+    card.addEventListener('click', () => {
+        card.querySelector('input[type=radio]').checked = true;
+    });
+});
+
+// ── CHAT ──────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
     const form = document.getElementById('query-form');
     const input = document.getElementById('query-input');
@@ -7,48 +24,30 @@ document.addEventListener('DOMContentLoaded', () => {
 
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
-        
         const query = input.value.trim();
         if (!query) return;
 
-        // Clear input
         input.value = '';
         input.disabled = true;
         sendButton.disabled = true;
 
-        // Add user message to UI
         addMessage(query, 'user');
         addHistoryItem(query);
-
-        // Show typing indicator
         const typingId = addTypingIndicator();
 
         try {
-            // Call FastAPI Backend
             const response = await fetch('/api/ask', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ query: query })
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query })
             });
-
-            if (!response.ok) {
-                throw new Error('Network response was not ok');
-            }
-
+            if (!response.ok) throw new Error(`Server error: ${response.status}`);
             const data = await response.json();
-            
-            // Remove typing indicator
             removeElement(typingId);
-            
-            // Render AI response with citations
             addMessage(data.answer, 'ai', data.sources);
-
         } catch (error) {
-            console.error('Error:', error);
             removeElement(typingId);
-            addMessage('An error occurred while fetching the answer. Make sure the backend and Ollama are running.', 'system');
+            addMessage('An error occurred. Make sure the backend and Ollama are running.', 'system');
         } finally {
             input.disabled = false;
             sendButton.disabled = false;
@@ -59,16 +58,10 @@ document.addEventListener('DOMContentLoaded', () => {
     function addMessage(text, sender, sources = null) {
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${sender}-message`;
-        
-        let avatarText = sender === 'user' ? 'U' : 'AI';
-        let avatarClass = sender === 'user' ? 'user-avatar' : 'ai-avatar';
-        if (sender === 'system') {
-            avatarText = '!';
-            avatarClass = 'user-avatar';
-        }
-
+        const avatarText = sender === 'user' ? 'U' : 'AI';
+        const avatarClass = sender === 'user' ? 'user-avatar' : 'ai-avatar';
         let contentHTML = `<p>${formatText(text)}</p>`;
-        
+
         if (sources && sources.length > 0) {
             let citationsHTML = '<div class="citations-block">';
             sources.forEach(src => {
@@ -76,8 +69,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <div class="citation-pill">
                         <span class="citation-meta">[${src.citation_number}] Doc: ${src.doc_id} | Page: ${src.page_number}</span>
                         <span class="citation-text">"${src.text}"</span>
-                    </div>
-                `;
+                    </div>`;
             });
             citationsHTML += '</div>';
             contentHTML += citationsHTML;
@@ -85,32 +77,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
         messageDiv.innerHTML = `
             <div class="avatar ${avatarClass}">${avatarText}</div>
-            <div class="content">
-                ${contentHTML}
-            </div>
-        `;
-
+            <div class="content">${contentHTML}</div>`;
         chatWindow.appendChild(messageDiv);
-        scrollToBottom();
+        chatWindow.scrollTop = chatWindow.scrollHeight;
     }
 
     function addTypingIndicator() {
         const id = 'typing-' + Date.now();
-        const messageDiv = document.createElement('div');
-        messageDiv.className = `message ai-message`;
-        messageDiv.id = id;
-        
-        messageDiv.innerHTML = `
+        const div = document.createElement('div');
+        div.className = 'message ai-message';
+        div.id = id;
+        div.innerHTML = `
             <div class="avatar ai-avatar">AI</div>
-            <div class="content">
-                <div class="typing-indicator">
-                    <span></span><span></span><span></span>
-                </div>
-            </div>
-        `;
-        
-        chatWindow.appendChild(messageDiv);
-        scrollToBottom();
+            <div class="content"><div class="typing-indicator"><span></span><span></span><span></span></div></div>`;
+        chatWindow.appendChild(div);
+        chatWindow.scrollTop = chatWindow.scrollHeight;
         return id;
     }
 
@@ -119,24 +100,15 @@ document.addEventListener('DOMContentLoaded', () => {
         if (el) el.remove();
     }
 
-    function scrollToBottom() {
-        chatWindow.scrollTop = chatWindow.scrollHeight;
-    }
-
     function addHistoryItem(query) {
-        // Remove empty state if present
         const emptyState = historyList.querySelector('.empty-state');
-        if (emptyState) {
-            emptyState.remove();
-        }
-
+        if (emptyState) emptyState.remove();
         const li = document.createElement('li');
         li.textContent = query;
         li.title = query;
         historyList.prepend(li);
     }
 
-    // Basic markdown formatting for the answer
     function formatText(text) {
         return text
             .replace(/\n\n/g, '</p><p>')
@@ -144,3 +116,99 @@ document.addEventListener('DOMContentLoaded', () => {
             .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
     }
 });
+
+// ── EVALUATION ────────────────────────────────────────────────────────────
+async function runEvaluation() {
+    const strategyInput = document.querySelector('input[name="strategy"]:checked');
+    if (!strategyInput) return;
+    const strategy = strategyInput.value;
+
+    const btn = document.getElementById('run-eval-btn');
+    const runLabel = document.getElementById('run-label');
+    const runSpinner = document.getElementById('run-spinner');
+    const progressDiv = document.getElementById('eval-progress');
+    const progFill = document.getElementById('prog-fill');
+    const progLabel = document.getElementById('prog-label');
+    const scoreSummary = document.getElementById('score-summary');
+    const resultsTable = document.getElementById('results-table');
+    const resultsBody = document.getElementById('results-body');
+
+    // Disable UI
+    btn.disabled = true;
+    runLabel.classList.add('hidden');
+    runSpinner.classList.remove('hidden');
+    scoreSummary.classList.add('hidden');
+    resultsTable.classList.add('hidden');
+
+    // Show progress bar
+    progressDiv.classList.remove('hidden');
+    let fakeProgress = 0;
+    const progressInterval = setInterval(() => {
+        if (fakeProgress < 85) {
+            fakeProgress += Math.random() * 3;
+            progFill.style.width = fakeProgress + '%';
+            const steps = [
+                'Chunking documents…',
+                'Building FAISS vector index…',
+                'Building BM25 lexical index…',
+                'Running benchmark queries…',
+                'Evaluating with LLM-as-a-judge…',
+            ];
+            const stepIdx = Math.min(Math.floor(fakeProgress / 20), steps.length - 1);
+            progLabel.textContent = steps[stepIdx];
+        }
+    }, 800);
+
+    try {
+        const response = await fetch('/api/evaluate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ strategy })
+        });
+
+        clearInterval(progressInterval);
+        progFill.style.width = '100%';
+        progLabel.textContent = 'Complete!';
+
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.detail || 'Unknown server error');
+        }
+
+        const data = await response.json();
+        setTimeout(() => progressDiv.classList.add('hidden'), 800);
+
+        // Fill score summary
+        document.getElementById('score-val').textContent = `${data.passed} / ${data.total}`;
+        document.getElementById('score-pct').textContent = `${data.score_pct}%`;
+        const strategyLabels = {
+            normal: 'Normal',
+            semantic: 'Semantic',
+            parent_child: 'Parent-Child'
+        };
+        document.getElementById('score-strategy').textContent = strategyLabels[data.strategy] || data.strategy;
+        scoreSummary.classList.remove('hidden');
+
+        // Fill results table
+        resultsBody.innerHTML = '';
+        data.results.forEach((r, i) => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>${i + 1}</td>
+                <td>${r.query}</td>
+                <td style="color:var(--text-muted)">${r.expected_topic}</td>
+                <td><span class="${r.passed ? 'badge-pass' : 'badge-fail'}">${r.passed ? 'PASS' : 'FAIL'}</span></td>`;
+            resultsBody.appendChild(row);
+        });
+        resultsTable.classList.remove('hidden');
+
+    } catch (err) {
+        clearInterval(progressInterval);
+        progFill.style.width = '0%';
+        progLabel.textContent = `Error: ${err.message}`;
+    } finally {
+        btn.disabled = false;
+        runLabel.classList.remove('hidden');
+        runSpinner.classList.add('hidden');
+    }
+}
