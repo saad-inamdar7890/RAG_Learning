@@ -65,7 +65,8 @@ def main() -> int:
         return 0
 
     titles = load_document_titles()
-    splitter = RecursiveCharacterTextSplitter(chunk_size=args.size, chunk_overlap=args.overlap)
+    parent_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=150)
+    child_splitter = RecursiveCharacterTextSplitter(chunk_size=300, chunk_overlap=50)
 
     for path in files:
         pages = load_pages(path)
@@ -84,27 +85,33 @@ def main() -> int:
                 continue
             page_number = page.get("page_number")
             
-            # Semantic chunking
-            chunks = splitter.split_text(text)
+            # Parent chunking
+            parent_chunks = parent_splitter.split_text(text)
             
-            # Metadata enrichment
-            start_char = 0
-            for chunk in chunks:
-                end_char = start_char + len(chunk)
-                enriched_text = f"Document: {doc_title} | Page: {page_number}\n{chunk}"
+            for parent_chunk in parent_chunks:
+                enriched_parent = f"Document: {doc_title} | Page: {page_number}\n{parent_chunk}"
                 
-                row = {
-                    "chunk_id": f"{doc_id}::p{page_number}::c{chunk_index:05d}",
-                    "doc_id": doc_id,
-                    "chunk_index": chunk_index,
-                    "page_number": page_number,
-                    "start_char": start_char,
-                    "end_char": end_char,
-                    "text": enriched_text,
-                }
-                chunk_rows.append(row)
-                chunk_index += 1
-                start_char = end_char  # Approximate offset for legacy compat
+                # Child chunking
+                child_chunks = child_splitter.split_text(parent_chunk)
+                
+                start_char = 0
+                for child_chunk in child_chunks:
+                    end_char = start_char + len(child_chunk)
+                    enriched_child = f"Document: {doc_title} | Page: {page_number}\n{child_chunk}"
+                    
+                    row = {
+                        "chunk_id": f"{doc_id}::p{page_number}::c{chunk_index:05d}",
+                        "doc_id": doc_id,
+                        "chunk_index": chunk_index,
+                        "page_number": page_number,
+                        "start_char": start_char,
+                        "end_char": end_char,
+                        "text": enriched_child,
+                        "parent_text": enriched_parent,
+                    }
+                    chunk_rows.append(row)
+                    chunk_index += 1
+                    start_char = end_char  # Approximate offset
 
         out_path = write_chunks(doc_id, chunk_rows)
         print(f"Wrote {out_path} ({len(chunk_rows)} chunks)")

@@ -94,6 +94,7 @@ class RAGPipeline:
 
     def retrieve_and_rerank(self, query: str, top_k: int = 5, alpha: float = 0.6) -> List[dict]:
         query_vec = self.embedder.encode([query], normalize_embeddings=True)
+        # Search for top 50 child chunks
         vec_scores, vec_indices = self.index.search(np.asarray(query_vec, dtype=np.float32), 50)
         
         if self.use_hybrid:
@@ -113,23 +114,34 @@ class RAGPipeline:
             for idx, score in enumerate(bm25_sc):
                 combined[idx] = combined.get(idx, 0.0) + (1 - alpha) * score
                 
-            top = sorted(combined.items(), key=lambda x: x[1], reverse=True)[:top_k]
+            top = sorted(combined.items(), key=lambda x: x[1], reverse=True)[:50]
             retrieved = [self.metadata[idx] for idx, _ in top]
         else:
             retrieved = []
-            for idx in vec_indices[0][:top_k]:
+            for idx in vec_indices[0][:50]:
                 if 0 <= idx < len(self.metadata):
                     retrieved.append(self.metadata[idx])
         
-        # Reranking
-        if retrieved:
-            pairs = [[query, r.get("text", "")] for r in retrieved[:10]]
+        # Deduplicate by parent text (Small-to-Big)
+        deduped = {}
+        for r in retrieved:
+            parent_text = r.get("parent_text", r.get("text", ""))
+            if parent_text not in deduped:
+                # Use parent text for reranking and LLM context
+                new_r = r.copy()
+                new_r["text"] = parent_text
+                deduped[parent_text] = new_r
+        
+        retrieved_deduped = list(deduped.values())
+        
+        # Reranking the top parent chunks
+        if retrieved_deduped:
+            pairs = [[query, r.get("text", "")] for r in retrieved_deduped[:15]]
             scores = self.reranker.predict(pairs)
-            ranked = sorted(zip(retrieved[:10], scores), key=lambda x: x[1], reverse=True)
-            retrieved = [r for r, _ in ranked] + retrieved[10:]
-            retrieved = retrieved[:top_k]
+            ranked = sorted(zip(retrieved_deduped[:15], scores), key=lambda x: x[1], reverse=True)
+            retrieved_deduped = [r for r, _ in ranked] + retrieved_deduped[15:]
             
-        return retrieved
+        return retrieved_deduped[:top_k]
 
     def generate_answer(self, query: str, context_chunks: List[dict]) -> str:
         context = build_context(context_chunks)
