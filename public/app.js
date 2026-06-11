@@ -181,6 +181,7 @@ async function runEvaluation() {
         // Fill score summary
         document.getElementById('score-val').textContent = `${data.passed} / ${data.total}`;
         document.getElementById('score-pct').textContent = `${data.score_pct}%`;
+        document.getElementById('score-latency').textContent = `${data.avg_latency_s}s`;
         const strategyLabels = {
             normal: 'Normal',
             semantic: 'Semantic',
@@ -189,14 +190,39 @@ async function runEvaluation() {
         document.getElementById('score-strategy').textContent = strategyLabels[data.strategy] || data.strategy;
         scoreSummary.classList.remove('hidden');
 
+        // Criteria breakdown bar
+        const criteriaGrid = document.getElementById('criteria-grid');
+        const criteriaLabels = { latency: 'Latency', citation: 'Citations', faithfulness: 'Faithfulness', topical: 'Topical' };
+        criteriaGrid.innerHTML = '';
+        Object.entries(data.criteria_pass_counts).forEach(([key, count]) => {
+            const pct = Math.round(count / data.total * 100);
+            criteriaGrid.innerHTML += `
+                <div class="criteria-item">
+                    <div class="criteria-label">${criteriaLabels[key] || key}</div>
+                    <div class="criteria-bar-wrap">
+                        <div class="criteria-bar-fill" style="width:${pct}%"></div>
+                    </div>
+                    <div class="criteria-count">${count}/${data.total} (${pct}%)</div>
+                </div>`;
+        });
+        document.getElementById('criteria-breakdown').classList.remove('hidden');
+
         // Fill results table
         resultsBody.innerHTML = '';
         data.results.forEach((r, i) => {
+            const c = r.criteria || {};
+            const cell = (crit) => {
+                const ok = c[crit]?.passed;
+                return `<td title="${c[crit]?.detail || ''}"><span class="${ok ? 'badge-pass' : 'badge-fail'}">${ok ? '\u2713' : '\u2717'}</span></td>`;
+            };
             const row = document.createElement('tr');
             row.innerHTML = `
                 <td>${i + 1}</td>
                 <td>${r.query}</td>
-                <td style="color:var(--text-muted)">${r.expected_topic}</td>
+                ${cell('latency')}
+                ${cell('citation')}
+                ${cell('faithfulness')}
+                ${cell('topical')}
                 <td><span class="${r.passed ? 'badge-pass' : 'badge-fail'}">${r.passed ? 'PASS' : 'FAIL'}</span></td>`;
             resultsBody.appendChild(row);
         });
