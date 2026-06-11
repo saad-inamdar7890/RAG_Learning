@@ -46,17 +46,31 @@ class QueryResponse(BaseModel):
 class EvalRequest(BaseModel):
     strategy: str   # "normal" | "semantic" | "parent_child"
 
+class CriterionResult(BaseModel):
+    passed: bool
+    detail: str
+
+class CriteriaBreakdown(BaseModel):
+    latency: CriterionResult
+    citation: CriterionResult
+    faithfulness: CriterionResult
+    topical: CriterionResult
+
 class EvalQueryResult(BaseModel):
     query: str
     expected_topic: str
     answer: str
     passed: bool
+    latency_s: float
+    criteria: CriteriaBreakdown
 
 class EvalResponse(BaseModel):
     strategy: str
     total: int
     passed: int
     score_pct: float
+    avg_latency_s: float
+    criteria_pass_counts: dict
     results: list[EvalQueryResult]
 
 # ── Startup ───────────────────────────────────────────────────────────────────
@@ -94,11 +108,20 @@ async def run_eval(request: EvalRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
     passed = sum(1 for r in results if r["passed"])
+    total = len(results)
+    avg_lat = round(sum(r.get("latency_s", 0) for r in results) / max(total, 1), 2)
+    criteria_names = ["latency", "citation", "faithfulness", "topical"]
+    criteria_counts = {
+        k: sum(1 for r in results if r.get("criteria", {}).get(k, {}).get("passed", False))
+        for k in criteria_names
+    }
     return {
         "strategy": request.strategy,
-        "total": len(results),
+        "total": total,
         "passed": passed,
-        "score_pct": round(passed / len(results) * 100, 1) if results else 0,
+        "score_pct": round(passed / total * 100, 1) if total else 0,
+        "avg_latency_s": avg_lat,
+        "criteria_pass_counts": criteria_counts,
         "results": results,
     }
 

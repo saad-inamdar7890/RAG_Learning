@@ -359,9 +359,16 @@ def run_evaluation(strategy: str) -> List[dict]:
       1. Load pages
       2. Chunk with `strategy` (normal | semantic | parent_child)
       3. Build indexes
-      4. For each eval query: retrieve → generate → judge
-      5. Return list of result dicts
+      4. For each eval query, evaluate on 4 strict criteria:
+           - Latency      : end-to-end < LATENCY_THRESHOLD_S
+           - Citation     : answer contains [N] bracketed references
+           - Faithfulness : answer grounded only in retrieved context
+           - Topical      : answer addresses the expected topic
+      5. A query PASSES only if ALL 4 criteria pass
+      6. Return list of result dicts with per-criterion breakdown
     """
+    import time
+
     pages = _load_pages()
     if not pages:
         raise RuntimeError("No cleaned page files found in data/clean.")
@@ -381,22 +388,54 @@ def run_evaluation(strategy: str) -> List[dict]:
     for item in EVAL_QUERIES:
         query = item["query"]
         expected = item["expected_topic"]
+
+        # ── Criterion 1: Latency ──────────────────────────────────────────
+        t_start = time.time()
         try:
             retrieved = _retrieve(query)
             answer = _generate(query, retrieved)
-            passed = _llm_judge(query, answer, expected)
         except Exception as exc:
             answer = f"ERROR: {exc}"
-            passed = False
+            retrieved = []
+
+        latency_s = round(time.time() - t_start, 2)
+        latency_ok = latency_s <= LATENCY_THRESHOLD_S
+
+        # ── Criterion 2: Citation format ──────────────────────────────────
+        citation_ok = _check_citations(answer)
+
+        # ── Criterion 3: Faithfulness ─────────────────────────────────────
+        try:
+            faithful_ok = _faithfulness_judge(query, answer, retrieved) if retrieved else False
+        except Exception:
+            faithful_ok = False
+
+        # ── Criterion 4: Topical correctness ──────────────────────────────
+        try:
+            topical_ok = _topical_judge(query, answer, expected) if answer and not answer.startswith("ERROR") else False
+        except Exception:
+            topical_ok = False
+
+        # ── Overall pass: ALL 4 must pass ─────────────────────────────────
+        all_passed = latency_ok and citation_ok and faithful_ok and topical_ok
 
         results.append({
             "query": query,
             "expected_topic": expected,
             "answer": answer,
-            "passed": passed,
+            "passed": all_passed,
+            "latency_s": latency_s,
+            "criteria": {
+                "latency":     {"passed": latency_ok,  "detail": f"{latency_s}s (threshold: {LATENCY_THRESHOLD_S}s)"},
+                "citation":    {"passed": citation_ok,  "detail": "Contains [N] citations" if citation_ok else "Missing citations"},
+                "faithfulness":{"passed": faithful_ok,  "detail": "Grounded in context" if faithful_ok else "Introduces outside facts"},
+                "topical":     {"passed": topical_ok,   "detail": f"Covers: {expected}"},
+            },
             "sources": [
                 {"doc_id": c.get("doc_id"), "page_number": c.get("page_number")}
-                for c in (retrieved if 'retrieved' in dir() else [])
+                for c in retrieved
             ],
         })
+
     return results
+
