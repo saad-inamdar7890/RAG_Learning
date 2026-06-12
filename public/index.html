@@ -33,6 +33,10 @@
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
                     Evaluation
                 </button>
+                <button class="nav-btn" id="nav-metrics" onclick="showTab('metrics')">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+                    Metrics
+                </button>
             </nav>
 
             <div class="history-list" id="history-panel">
@@ -42,6 +46,43 @@
                 </ul>
             </div>
         </aside>
+
+        <!-- ── METRICS TAB ──────────────────────────────────────── -->
+        <main class="eval-area hidden" id="tab-metrics">
+            <header class="top-bar">
+                <h1>Monitoring & Observability</h1>
+                <p>Live request latency, step traces, and token usage — updated after each chat query</p>
+            </header>
+            <div class="eval-content">
+                <div style="display:flex;gap:10px;justify-content:flex-end">
+                    <button class="run-btn" style="width:auto;padding:8px 16px;font-size:0.85rem" onclick="loadMetrics()">Refresh</button>
+                </div>
+
+                <!-- Latency summary -->
+                <div class="score-summary" id="metrics-latency">
+                    <div class="score-card"><div class="score-big" id="m-total">—</div><div class="score-label">Total Requests</div></div>
+                    <div class="score-card"><div class="score-big accent" id="m-p50">—</div><div class="score-label">p50 Latency</div></div>
+                    <div class="score-card"><div class="score-big" id="m-p95">—</div><div class="score-label">p95 Latency</div></div>
+                    <div class="score-card"><div class="score-big" id="m-tokens">—</div><div class="score-label">Avg Tokens</div></div>
+                </div>
+
+                <!-- Step averages -->
+                <div class="card">
+                    <h2>Average Step Latencies</h2>
+                    <p class="card-sub">Breakdown of time spent in each pipeline step, averaged over all requests.</p>
+                    <div class="criteria-grid" id="metrics-steps"><p style="color:#aaa;font-size:0.82rem">No data yet — ask a question in the Chat tab first.</p></div>
+                </div>
+
+                <!-- Recent requests -->
+                <div class="card">
+                    <h2>Recent Requests (Last 10)</h2>
+                    <table>
+                        <thead><tr><th>#</th><th>Total Latency</th><th>Tokens Generated</th></tr></thead>
+                        <tbody id="metrics-recent"></tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
 
         <!-- ── CHAT TAB ─────────────────────────────────────────── -->
         <main class="chat-area" id="tab-chat">

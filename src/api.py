@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from src.rag_pipeline import RAGPipeline
 from src.eval_engine import run_evaluation, EVAL_QUERIES
+from src import metrics
 
 app = FastAPI(title="Ask My Docs API", description="Production RAG Backend")
 
@@ -33,6 +34,11 @@ def serve_index():
 class QueryRequest(BaseModel):
     query: str
 
+class Trace(BaseModel):
+    total_s: float
+    steps: dict
+    tokens: int
+
 class Source(BaseModel):
     citation_number: int
     doc_id: str
@@ -42,6 +48,7 @@ class Source(BaseModel):
 class QueryResponse(BaseModel):
     answer: str
     sources: list[Source]
+    trace: Trace
 
 class EvalRequest(BaseModel):
     strategy: str   # "normal" | "semantic" | "parent_child"
@@ -130,6 +137,11 @@ async def run_eval(request: EvalRequest):
 @app.get("/api/eval-queries")
 def get_eval_queries():
     return {"queries": [q["query"] for q in EVAL_QUERIES]}
+
+@app.get("/api/metrics")
+def get_metrics():
+    """Returns p50/p95/p99 latencies, step averages, token counts."""
+    return metrics.get_summary()
 
 @app.get("/api/health")
 def health_check():

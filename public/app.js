@@ -2,9 +2,50 @@
 function showTab(tab) {
     document.getElementById('tab-chat').classList.toggle('hidden', tab !== 'chat');
     document.getElementById('tab-eval').classList.toggle('hidden', tab !== 'eval');
+    document.getElementById('tab-metrics').classList.toggle('hidden', tab !== 'metrics');
     document.getElementById('nav-chat').classList.toggle('active', tab === 'chat');
     document.getElementById('nav-eval').classList.toggle('active', tab === 'eval');
+    document.getElementById('nav-metrics').classList.toggle('active', tab === 'metrics');
     document.getElementById('history-panel').classList.toggle('hidden', tab !== 'chat');
+    if (tab === 'metrics') loadMetrics();
+}
+
+async function loadMetrics() {
+    try {
+        const res = await fetch('/api/metrics');
+        const data = await res.json();
+
+        document.getElementById('m-total').textContent = data.total_requests || 0;
+        document.getElementById('m-p50').textContent = data.latency?.p50_s != null ? data.latency.p50_s + 's' : '—';
+        document.getElementById('m-p95').textContent = data.latency?.p95_s != null ? data.latency.p95_s + 's' : '—';
+        document.getElementById('m-tokens').textContent = data.avg_tokens_per_request || '—';
+
+        const stepLabels = { embed_s: 'Embed', faiss_s: 'FAISS Search', bm25_hybrid_s: 'BM25 Hybrid', rerank_s: 'Rerank', generate_s: 'LLM Generate' };
+        const stepsEl = document.getElementById('metrics-steps');
+        const steps = data.step_averages_s || {};
+        if (Object.keys(steps).length === 0) {
+            stepsEl.innerHTML = '<p style="color:#aaa;font-size:0.82rem">No data yet — ask a question in the Chat tab first.</p>';
+        } else {
+            const maxVal = Math.max(...Object.values(steps));
+            stepsEl.innerHTML = Object.entries(steps).map(([k, v]) => {
+                const pct = Math.round((v / maxVal) * 100);
+                return `<div class="criteria-item">
+                    <div class="criteria-label">${stepLabels[k] || k}</div>
+                    <div class="criteria-bar-wrap"><div class="criteria-bar-fill" style="width:${pct}%"></div></div>
+                    <div class="criteria-count">${v}s</div>
+                </div>`;
+            }).join('');
+        }
+
+        const recentEl = document.getElementById('metrics-recent');
+        const recent = (data.recent_requests || []).slice().reverse();
+        recentEl.innerHTML = recent.map((r, i) =>
+            `<tr><td>${i + 1}</td><td>${r.total_s}s</td><td>${r.tokens || '—'}</td></tr>`
+        ).join('') || '<tr><td colspan="3" style="color:#aaa">No requests yet.</td></tr>';
+
+    } catch (e) {
+        console.error('Failed to load metrics:', e);
+    }
 }
 
 // ── Strategy card radio sync ──────────────────────────────────────────────
