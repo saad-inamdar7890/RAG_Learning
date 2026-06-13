@@ -65,8 +65,8 @@ def main() -> int:
         return 0
 
     titles = load_document_titles()
-    parent_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=150)
-    child_splitter = RecursiveCharacterTextSplitter(chunk_size=300, chunk_overlap=50)
+    parent_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=150)
+    child_splitter = RecursiveCharacterTextSplitter(chunk_size=150, chunk_overlap=50)
 
     for path in files:
         pages = load_pages(path)
