@@ -159,123 +159,161 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ── EVALUATION ────────────────────────────────────────────────────────────
-async function runEvaluation() {
+
+let evalQueries = [];
+
+async function loadEvalQueries() {
+    try {
+        const res = await fetch('/api/eval-queries');
+        const data = await res.json();
+        evalQueries = data.queries || [];
+        renderEvalList();
+    } catch (e) {
+        document.getElementById('eval-questions-list').innerHTML = `<p style="color:red;text-align:center">Failed to load queries.</p>`;
+    }
+}
+
+function renderEvalList() {
+    const list = document.getElementById('eval-questions-list');
+    list.innerHTML = '';
+    
+    evalQueries.forEach((qObj, index) => {
+        const card = document.createElement('div');
+        card.className = 'q-card';
+        card.dataset.index = index;
+        
+        card.innerHTML = `
+            <div class="q-card-header" onclick="toggleCard(${index})">
+                <div class="q-card-title">${index + 1}. ${qObj.query}</div>
+                <div class="q-card-toggle">▼</div>
+            </div>
+            <div class="q-card-body" id="q-body-${index}">
+                <div class="q-action-bar">
+                    <button class="q-btn q-btn-generate" id="btn-gen-${index}" onclick="generateAnswer(${index})">
+                        <span>Generate Answer</span>
+                    </button>
+                    <button class="q-btn q-btn-judge hidden" id="btn-judge-${index}" onclick="judgeAnswer(${index})">
+                        <span>Evaluate Answer</span>
+                    </button>
+                </div>
+                <div class="q-answer-box empty" id="q-answer-${index}">Answer will appear here...</div>
+                <div class="q-judge-results hidden" id="q-results-${index}">
+                    <div class="q-judge-item"><span class="q-judge-label">Latency</span> <span class="q-judge-value" id="res-lat-${index}"></span></div>
+                    <div class="q-judge-item"><span class="q-judge-label">Citations</span> <span class="q-judge-value" id="res-cit-${index}"></span></div>
+                    <div class="q-judge-item"><span class="q-judge-label">Faithfulness</span> <span class="q-judge-value" id="res-fai-${index}"></span></div>
+                    <div class="q-judge-item"><span class="q-judge-label">Topicality</span> <span class="q-judge-value" id="res-top-${index}"></span></div>
+                </div>
+            </div>
+        `;
+        list.appendChild(card);
+    });
+}
+
+function toggleCard(index) {
+    const cards = document.querySelectorAll('.q-card');
+    cards.forEach((c, i) => {
+        if (i === index) {
+            c.classList.toggle('expanded');
+        } else {
+            c.classList.remove('expanded');
+        }
+    });
+}
+
+// Store intermediate state for each question
+const evalState = {};
+
+async function generateAnswer(index) {
     const strategyInput = document.querySelector('input[name="strategy"]:checked');
     if (!strategyInput) return;
     const strategy = strategyInput.value;
-
-    const btn = document.getElementById('run-eval-btn');
-    const runLabel = document.getElementById('run-label');
-    const runSpinner = document.getElementById('run-spinner');
-    const progressDiv = document.getElementById('eval-progress');
-    const progFill = document.getElementById('prog-fill');
-    const progLabel = document.getElementById('prog-label');
-    const scoreSummary = document.getElementById('score-summary');
-    const resultsTable = document.getElementById('results-table');
-    const resultsBody = document.getElementById('results-body');
-
-    // Disable UI
-    btn.disabled = true;
-    runLabel.classList.add('hidden');
-    runSpinner.classList.remove('hidden');
-    scoreSummary.classList.add('hidden');
-    resultsTable.classList.add('hidden');
-
-    // Show progress bar
-    progressDiv.classList.remove('hidden');
-    let fakeProgress = 0;
-    const progressInterval = setInterval(() => {
-        if (fakeProgress < 85) {
-            fakeProgress += Math.random() * 3;
-            progFill.style.width = fakeProgress + '%';
-            const steps = [
-                'Chunking documents…',
-                'Building FAISS vector index…',
-                'Building BM25 lexical index…',
-                'Running benchmark queries…',
-                'Evaluating with LLM-as-a-judge…',
-            ];
-            const stepIdx = Math.min(Math.floor(fakeProgress / 20), steps.length - 1);
-            progLabel.textContent = steps[stepIdx];
-        }
-    }, 800);
+    const qObj = evalQueries[index];
+    
+    const btnGen = document.getElementById(`btn-gen-${index}`);
+    const btnJudge = document.getElementById(`btn-judge-${index}`);
+    const answerBox = document.getElementById(`q-answer-${index}`);
+    const resultsBox = document.getElementById(`q-results-${index}`);
+    
+    btnGen.disabled = true;
+    btnGen.innerHTML = `<span class="spinner"></span> Generating...`;
+    btnJudge.classList.add('hidden');
+    resultsBox.classList.add('hidden');
+    answerBox.className = 'q-answer-box';
+    answerBox.innerHTML = '<i>Generating...</i>';
 
     try {
-        const response = await fetch('/api/evaluate', {
+        const res = await fetch('/api/eval-generate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ strategy })
+            body: JSON.stringify({ strategy, query: qObj.query })
         });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Server error');
 
-        clearInterval(progressInterval);
-        progFill.style.width = '100%';
-        progLabel.textContent = 'Complete!';
-
-        if (!response.ok) {
-            const err = await response.json();
-            throw new Error(err.detail || 'Unknown server error');
-        }
-
-        const data = await response.json();
-        setTimeout(() => progressDiv.classList.add('hidden'), 800);
-
-        // Fill score summary
-        document.getElementById('score-val').textContent = `${data.passed} / ${data.total}`;
-        document.getElementById('score-pct').textContent = `${data.score_pct}%`;
-        document.getElementById('score-latency').textContent = `${data.avg_latency_s}s`;
-        const strategyLabels = {
-            normal: 'Normal',
-            semantic: 'Semantic',
-            parent_child: 'Parent-Child'
-        };
-        document.getElementById('score-strategy').textContent = strategyLabels[data.strategy] || data.strategy;
-        scoreSummary.classList.remove('hidden');
-
-        // Criteria breakdown bar
-        const criteriaGrid = document.getElementById('criteria-grid');
-        const criteriaLabels = { latency: 'Latency', citation: 'Citations', faithfulness: 'Faithfulness', topical: 'Topical' };
-        criteriaGrid.innerHTML = '';
-        Object.entries(data.criteria_pass_counts).forEach(([key, count]) => {
-            const pct = Math.round(count / data.total * 100);
-            criteriaGrid.innerHTML += `
-                <div class="criteria-item">
-                    <div class="criteria-label">${criteriaLabels[key] || key}</div>
-                    <div class="criteria-bar-wrap">
-                        <div class="criteria-bar-fill" style="width:${pct}%"></div>
-                    </div>
-                    <div class="criteria-count">${count}/${data.total} (${pct}%)</div>
-                </div>`;
-        });
-        document.getElementById('criteria-breakdown').classList.remove('hidden');
-
-        // Fill results table
-        resultsBody.innerHTML = '';
-        data.results.forEach((r, i) => {
-            const c = r.criteria || {};
-            const cell = (crit) => {
-                const ok = c[crit]?.passed;
-                return `<td title="${c[crit]?.detail || ''}"><span class="${ok ? 'badge-pass' : 'badge-fail'}">${ok ? '\u2713' : '\u2717'}</span></td>`;
-            };
-            const row = document.createElement('tr');
-            row.innerHTML = `
-                <td>${i + 1}</td>
-                <td>${r.query}</td>
-                ${cell('latency')}
-                ${cell('citation')}
-                ${cell('faithfulness')}
-                ${cell('topical')}
-                <td><span class="${r.passed ? 'badge-pass' : 'badge-fail'}">${r.passed ? 'PASS' : 'FAIL'}</span></td>`;
-            resultsBody.appendChild(row);
-        });
-        resultsTable.classList.remove('hidden');
-
-    } catch (err) {
-        clearInterval(progressInterval);
-        progFill.style.width = '0%';
-        progLabel.textContent = `Error: ${err.message}`;
+        answerBox.textContent = data.answer;
+        evalState[index] = data; // Save retrieved_context, answer, latency_s
+        
+        btnGen.innerHTML = `Regenerate`;
+        btnJudge.classList.remove('hidden');
+    } catch (e) {
+        answerBox.innerHTML = `<span style="color:red">Error: ${e.message}</span>`;
+        btnGen.innerHTML = `Generate Answer`;
     } finally {
-        btn.disabled = false;
-        runLabel.classList.remove('hidden');
-        runSpinner.classList.add('hidden');
+        btnGen.disabled = false;
     }
 }
+
+async function judgeAnswer(index) {
+    const state = evalState[index];
+    if (!state) return;
+    const qObj = evalQueries[index];
+
+    const btnJudge = document.getElementById(`btn-judge-${index}`);
+    const resultsBox = document.getElementById(`q-results-${index}`);
+    
+    btnJudge.disabled = true;
+    btnJudge.innerHTML = `<span class="spinner"></span> Evaluating...`;
+    
+    // reset labels
+    ['lat', 'cit', 'fai', 'top'].forEach(k => {
+        document.getElementById(`res-${k}-${index}`).innerHTML = '<span class="badge-pending">...</span>';
+    });
+    resultsBox.classList.remove('hidden');
+
+    try {
+        const res = await fetch('/api/eval-judge', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                query: qObj.query,
+                answer: state.answer,
+                expected_topic: state.expected_topic,
+                retrieved_context: state.retrieved_context,
+                generate_latency_s: state.latency_s
+            })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Server error');
+
+        const c = data.criteria;
+        const setBadge = (id, ok, detail) => {
+            const el = document.getElementById(`res-${id}-${index}`);
+            el.innerHTML = `<span class="${ok ? 'badge-pass' : 'badge-fail'}">${ok ? 'PASS' : 'FAIL'}</span> <span style="font-size:0.75rem;color:#777;margin-left:6px">${detail}</span>`;
+        };
+
+        setBadge('lat', c.latency.passed, c.latency.detail);
+        setBadge('cit', c.citation.passed, c.citation.detail);
+        setBadge('fai', c.faithfulness.passed, c.faithfulness.detail);
+        setBadge('top', c.topical.passed, c.topical.detail);
+
+        btnJudge.innerHTML = data.passed ? `✅ All Passed` : `❌ Failed`;
+    } catch (e) {
+        alert("Judge error: " + e.message);
+        btnJudge.innerHTML = `Evaluate Answer`;
+    } finally {
+        btnJudge.disabled = false;
+    }
+}
+
+// Initial load
+loadEvalQueries();

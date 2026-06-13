@@ -146,64 +146,9 @@
                         </label>
                     </div>
 
-                    <button class="run-btn" id="run-eval-btn" onclick="runEvaluation()">
-                        <span id="run-label">▶ Run Evaluation</span>
-                        <span id="run-spinner" class="hidden">
-                            <span class="spinner"></span> Running…
-                        </span>
-                    </button>
-                    <p class="eval-warning">⚠️ This will re-index all documents and may take several minutes.</p>
-                </section>
-
-                <!-- Progress bar (shown while running) -->
-                <div id="eval-progress" class="hidden">
-                    <div class="progress-track"><div class="progress-fill" id="prog-fill"></div></div>
-                    <p id="prog-label" class="prog-label">Initialising…</p>
-                </div>
-
-                <!-- Score summary (shown after run) -->
-                <section class="score-summary hidden" id="score-summary">
-                    <div class="score-card">
-                        <div class="score-big" id="score-val">—</div>
-                        <div class="score-label">Full Pass (All 4)</div>
-                    </div>
-                    <div class="score-card">
-                        <div class="score-big accent" id="score-pct">—</div>
-                        <div class="score-label">Success Rate</div>
-                    </div>
-                    <div class="score-card">
-                        <div class="score-big" id="score-latency">—</div>
-                        <div class="score-label">Avg Latency</div>
-                    </div>
-                    <div class="score-card">
-                        <div class="score-big" id="score-strategy">—</div>
-                        <div class="score-label">Strategy</div>
-                    </div>
-                </section>
-
-                <!-- Criteria breakdown bar -->
-                <section class="criteria-breakdown hidden" id="criteria-breakdown">
-                    <h2>Criteria Breakdown</h2>
-                    <div class="criteria-grid" id="criteria-grid"></div>
-                </section>
-
-                <!-- Results table -->
-                <section class="results-table hidden" id="results-table">
-                    <h2>Detailed Results</h2>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>#</th>
-                                <th>Question</th>
-                                <th>Latency</th>
-                                <th>Citation</th>
-                                <th>Faithful</th>
-                                <th>Topical</th>
-                                <th>Result</th>
-                            </tr>
-                        </thead>
-                        <tbody id="results-body"></tbody>
-                    </table>
+                <!-- Questions List -->
+                <section class="questions-list" id="eval-questions-list">
+                    <p style="color:#aaa; text-align:center; padding: 2rem;">Loading benchmark questions...</p>
                 </section>
             </div>
         </main>

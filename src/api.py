@@ -1,13 +1,14 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
+import json
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
 from src.rag_pipeline import RAGPipeline
-from src.eval_engine import run_evaluation, EVAL_QUERIES
+from src.eval_engine import generate_single_eval, judge_single_eval, EVAL_QUERIES
 from src import metrics
 
 app = FastAPI(title="Ask My Docs API", description="Production RAG Backend")
@@ -50,8 +51,15 @@ class QueryResponse(BaseModel):
     sources: list[Source]
     trace: Trace
 
-class EvalRequest(BaseModel):
-    strategy: str   # "normal" | "semantic" | "parent_child"
+class SingleEvalGenerateRequest(BaseModel):
+    strategy: str
+    query: str
+
+class SingleEvalGenerateResponse(BaseModel):
+    answer: str
+    latency_s: float
+    retrieved_context: list[dict]
+    expected_topic: str
 
 class CriterionResult(BaseModel):
     passed: bool
@@ -63,22 +71,16 @@ class CriteriaBreakdown(BaseModel):
     faithfulness: CriterionResult
     topical: CriterionResult
 
-class EvalQueryResult(BaseModel):
+class SingleEvalJudgeRequest(BaseModel):
     query: str
-    expected_topic: str
     answer: str
-    passed: bool
-    latency_s: float
-    criteria: CriteriaBreakdown
+    expected_topic: str
+    retrieved_context: list[dict]
+    generate_latency_s: float
 
-class EvalResponse(BaseModel):
-    strategy: str
-    total: int
-    passed: int
-    score_pct: float
-    avg_latency_s: float
-    criteria_pass_counts: dict
-    results: list[EvalQueryResult]
+class SingleEvalJudgeResponse(BaseModel):
+    passed: bool
+    criteria: CriteriaBreakdown
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 
@@ -99,44 +101,41 @@ def ask_question(request: QueryRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ── Evaluation endpoint ───────────────────────────────────────────────────────
-
-@app.post("/api/evaluate", response_model=EvalResponse)
-async def run_eval(request: EvalRequest):
+@app.post("/api/eval-generate", response_model=SingleEvalGenerateResponse)
+async def eval_generate_endpoint(req: SingleEvalGenerateRequest):
     allowed = {"normal", "semantic", "parent_child"}
-    if request.strategy not in allowed:
+    if req.strategy not in allowed:
         raise HTTPException(status_code=400, detail=f"strategy must be one of {allowed}")
+    
+    # Find expected topic
+    expected = next((item["expected_topic"] for item in EVAL_QUERIES if item["query"] == req.query), "Unknown")
+    
+    loop = asyncio.get_event_loop()
     try:
-        loop = asyncio.get_event_loop()
-        results = await loop.run_in_executor(
-            _executor, run_evaluation, request.strategy
+        res = await loop.run_in_executor(
+            _executor, generate_single_eval, req.strategy, req.query
         )
+        res["expected_topic"] = expected
+        return res
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    passed = sum(1 for r in results if r["passed"])
-    total = len(results)
-    avg_lat = round(sum(r.get("latency_s", 0) for r in results) / max(total, 1), 2)
-    criteria_names = ["latency", "citation", "faithfulness", "topical"]
-    criteria_counts = {
-        k: sum(1 for r in results if r.get("criteria", {}).get(k, {}).get("passed", False))
-        for k in criteria_names
-    }
-    return {
-        "strategy": request.strategy,
-        "total": total,
-        "passed": passed,
-        "score_pct": round(passed / total * 100, 1) if total else 0,
-        "avg_latency_s": avg_lat,
-        "criteria_pass_counts": criteria_counts,
-        "results": results,
-    }
+@app.post("/api/eval-judge", response_model=SingleEvalJudgeResponse)
+async def eval_judge_endpoint(req: SingleEvalJudgeRequest):
+    loop = asyncio.get_event_loop()
+    try:
+        res = await loop.run_in_executor(
+            _executor, judge_single_eval, req.query, req.answer, req.expected_topic, req.retrieved_context, req.generate_latency_s
+        )
+        return res
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ── Metadata ──────────────────────────────────────────────────────────────────
 
 @app.get("/api/eval-queries")
 def get_eval_queries():
-    return {"queries": [q["query"] for q in EVAL_QUERIES]}
+    return {"queries": EVAL_QUERIES}
 
 @app.get("/api/metrics")
 def get_metrics():

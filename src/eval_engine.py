@@ -20,7 +20,6 @@ except Exception as exc:
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 CLEAN_DIR = os.path.join(BASE_DIR, "data", "clean")
 ARTIFACTS_DIR = os.path.join(BASE_DIR, "data", "artifacts")
-INDEX_DIR = os.path.join(ARTIFACTS_DIR, "index")
 MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 OLLAMA_HOST = "http://localhost:11434"
 OLLAMA_MODEL = "llama3.1:8b"
@@ -160,9 +159,9 @@ def chunk_parent_child(pages: List[dict]) -> List[dict]:
 
 # ── Index building ────────────────────────────────────────────────────────────
 
-def build_indexes(chunks: List[dict]) -> None:
-    """Embed chunks with FAISS and build BM25 in INDEX_DIR."""
-    os.makedirs(INDEX_DIR, exist_ok=True)
+def build_indexes(chunks: List[dict], index_dir: str) -> None:
+    """Embed chunks with FAISS and build BM25 in index_dir."""
+    os.makedirs(index_dir, exist_ok=True)
     model = SentenceTransformer(MODEL_NAME)
     texts = [c.get("text", "") for c in chunks]
 
@@ -172,15 +171,15 @@ def build_indexes(chunks: List[dict]) -> None:
     dim = embeddings.shape[1]
     index = faiss.IndexFlatIP(dim)
     index.add(np.asarray(embeddings, dtype=np.float32))
-    faiss.write_index(index, os.path.join(INDEX_DIR, "faiss.index"))
+    faiss.write_index(index, os.path.join(index_dir, "faiss.index"))
 
-    with open(os.path.join(INDEX_DIR, "chunks.jsonl"), "w", encoding="utf-8") as f:
+    with open(os.path.join(index_dir, "chunks.jsonl"), "w", encoding="utf-8") as f:
         for c in chunks:
             row = {k: c.get(k) for k in
                    ("chunk_id", "doc_id", "page_number", "text", "parent_text")}
             f.write(json.dumps(row, ensure_ascii=True) + "\n")
 
-    with open(os.path.join(INDEX_DIR, "index_info.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(index_dir, "index_info.json"), "w", encoding="utf-8") as f:
         json.dump({"model": MODEL_NAME, "chunks": len(chunks), "dim": dim}, f, indent=2)
 
     # BM25
@@ -195,10 +194,10 @@ def build_indexes(chunks: List[dict]) -> None:
            for term, cnt in df.items()}
     bm25_payload = {"corpus_tokens": token_corpus, "avgdl": avg_dl, "idf": idf}
 
-    with open(os.path.join(INDEX_DIR, "bm25.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(index_dir, "bm25.json"), "w", encoding="utf-8") as f:
         json.dump(bm25_payload, f, ensure_ascii=True)
 
-    with open(os.path.join(INDEX_DIR, "bm25_chunks.jsonl"), "w", encoding="utf-8") as f:
+    with open(os.path.join(index_dir, "bm25_chunks.jsonl"), "w", encoding="utf-8") as f:
         for c in chunks:
             row = {k: c.get(k) for k in
                    ("chunk_id", "doc_id", "page_number", "text")}
@@ -207,13 +206,13 @@ def build_indexes(chunks: List[dict]) -> None:
 
 # ── Retrieve + Rerank ────────────────────────────────────────────────────────
 
-def _retrieve(query: str, top_k: int = 5) -> List[dict]:
+def _retrieve(query: str, index_dir: str, top_k: int = 5) -> List[dict]:
     embedder = SentenceTransformer(MODEL_NAME)
     qv = embedder.encode([query], normalize_embeddings=True)
 
-    faiss_index = faiss.read_index(os.path.join(INDEX_DIR, "faiss.index"))
+    faiss_index = faiss.read_index(os.path.join(index_dir, "faiss.index"))
     meta = []
-    with open(os.path.join(INDEX_DIR, "chunks.jsonl"), encoding="utf-8") as f:
+    with open(os.path.join(index_dir, "chunks.jsonl"), encoding="utf-8") as f:
         for line in f:
             if line.strip():
                 meta.append(json.loads(line))
@@ -221,7 +220,7 @@ def _retrieve(query: str, top_k: int = 5) -> List[dict]:
     vec_scores, vec_idx = faiss_index.search(
         np.asarray(qv, dtype=np.float32), min(50, len(meta)))
 
-    with open(os.path.join(INDEX_DIR, "bm25.json"), encoding="utf-8") as f:
+    with open(os.path.join(index_dir, "bm25.json"), encoding="utf-8") as f:
         bm25_data = json.load(f)
     qtoken = tokenize(query)
     idf = bm25_data["idf"]
@@ -276,11 +275,10 @@ def _check_citations(answer: str) -> bool:
     return bool(re.search(r'\[\d+\]', answer))
 
 
-def _faithfulness_judge(query: str, answer: str, context_chunks: List[dict]) -> bool:
+def _combined_judge(query: str, answer: str, expected_topic: str, context_chunks: List[dict]) -> dict:
     """
-    Criterion 3: Answer must be grounded in the retrieved context.
-    The LLM judge is given the context and asked whether the answer
-    introduces facts NOT present in it.
+    Combines faithfulness and topicality judges into a single LLM call.
+    Returns: {"faithful": bool, "topical": bool}
     """
     import requests as req
     context_texts = "\n".join(
@@ -288,42 +286,35 @@ def _faithfulness_judge(query: str, answer: str, context_chunks: List[dict]) -> 
         for i, c in enumerate(context_chunks)
     )
     prompt = (
-        "You are an impartial faithfulness judge.\n"
-        "Given the CONTEXT below, does the ANSWER contain ONLY information "
-        "that can be found in the context? "
-        "Reply YES if faithful, NO if it introduces outside facts.\n\n"
+        "You are an impartial judge. Evaluate the AI's ANSWER based on two criteria:\n"
+        "1. Faithfulness: Does the ANSWER contain ONLY facts found in the CONTEXT? (True/False)\n"
+        f"2. Topicality: Does the ANSWER cover the topic of: '{expected_topic}'? (True/False)\n\n"
+        f"QUESTION: {query}\n\n"
         f"CONTEXT:\n{context_texts}\n\n"
         f"ANSWER:\n{answer}\n\n"
-        "Faithful? (YES/NO):"
+        "Reply with a raw JSON object (no markdown, no extra text) with exact keys 'faithful' and 'topical' mapping to boolean values:\n"
+        "{\"faithful\": true, \"topical\": true}"
     )
     resp = req.post(
         OLLAMA_HOST.rstrip("/") + "/api/generate",
-        json={"model": OLLAMA_MODEL, "prompt": prompt,
-              "stream": False, "options": {"temperature": 0.0}},
+        json={
+            "model": OLLAMA_MODEL, 
+            "prompt": prompt,
+            "stream": False, 
+            "format": "json",
+            "options": {"temperature": 0.0}
+        },
         timeout=60,
     )
     resp.raise_for_status()
-    return "YES" in resp.json().get("response", "").upper()
-
-
-def _topical_judge(query: str, answer: str, expected_topic: str) -> bool:
-    """Criterion 4 (original): Does the answer address the expected topic?"""
-    import requests as req
-    prompt = (
-        "You are an impartial judge evaluating an AI assistant's answer.\n"
-        f"Question: {query}\n"
-        f"Assistant Answer: {answer}\n"
-        f"Does the assistant's answer cover the topic of: {expected_topic}?\n"
-        "Reply with exactly YES or NO."
-    )
-    resp = req.post(
-        OLLAMA_HOST.rstrip("/") + "/api/generate",
-        json={"model": OLLAMA_MODEL, "prompt": prompt,
-              "stream": False, "options": {"temperature": 0.0}},
-        timeout=60,
-    )
-    resp.raise_for_status()
-    return "YES" in resp.json().get("response", "").upper()
+    try:
+        res = json.loads(resp.json().get("response", "{}"))
+        return {
+            "faithful": bool(res.get("faithful", False)),
+            "topical": bool(res.get("topical", False)),
+        }
+    except Exception:
+        return {"faithful": False, "topical": False}
 
 
 def _generate(query: str, chunks: List[dict]) -> str:
@@ -439,3 +430,68 @@ def run_evaluation(strategy: str) -> List[dict]:
 
     return results
 
+
+def generate_single_eval(strategy: str, query: str) -> dict:
+    """
+    Ensure index exists for strategy, retrieve chunks, and generate answer.
+    """
+    import time
+    
+    pages = _load_pages()
+    if not pages:
+        raise RuntimeError("No cleaned page files found in data/clean.")
+
+    chunkers = {
+        "normal": chunk_normal,
+        "semantic": chunk_semantic,
+        "parent_child": chunk_parent_child,
+    }
+    if strategy not in chunkers:
+        raise ValueError(f"Unknown strategy '{strategy}'")
+
+    index_dir = os.path.join(ARTIFACTS_DIR, f"index_{strategy}")
+    if not os.path.exists(os.path.join(index_dir, "faiss.index")):
+        chunks = chunkers[strategy](pages)
+        build_indexes(chunks, index_dir)
+
+    t_start = time.time()
+    try:
+        retrieved = _retrieve(query, index_dir)
+        answer = _generate(query, retrieved)
+    except Exception as exc:
+        answer = f"ERROR: {exc}"
+        retrieved = []
+    
+    latency_s = round(time.time() - t_start, 2)
+    
+    return {
+        "answer": answer,
+        "latency_s": latency_s,
+        "retrieved_context": retrieved
+    }
+
+def judge_single_eval(query: str, answer: str, expected_topic: str, retrieved_context: List[dict], generate_latency_s: float) -> dict:
+    """
+    Run the strict 4 criteria on a single answer.
+    """
+    latency_ok = generate_latency_s <= LATENCY_THRESHOLD_S
+    citation_ok = _check_citations(answer)
+    
+    faithful_ok = False
+    topical_ok = False
+    if answer and not answer.startswith("ERROR") and retrieved_context:
+        judge_res = _combined_judge(query, answer, expected_topic, retrieved_context)
+        faithful_ok = judge_res.get("faithful", False)
+        topical_ok = judge_res.get("topical", False)
+
+    all_passed = latency_ok and citation_ok and faithful_ok and topical_ok
+    
+    return {
+        "passed": all_passed,
+        "criteria": {
+            "latency":      {"passed": latency_ok,  "detail": f"{generate_latency_s}s (limit {LATENCY_THRESHOLD_S}s)"},
+            "citation":     {"passed": citation_ok,  "detail": "Has [N] citations" if citation_ok else "Missing citations"},
+            "faithfulness": {"passed": faithful_ok,  "detail": "Grounded" if faithful_ok else "Outside facts"},
+            "topical":      {"passed": topical_ok,   "detail": f"Covers: {expected_topic}"},
+        }
+    }

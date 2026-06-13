@@ -91,8 +91,6 @@ def call_ollama(prompt: str, model: str, host: str) -> str:
         "options": {"temperature": 0.2},
     }
     response = requests.post(url, json=payload, timeout=120)
-    if response.status_code != 200:
-        print(f"Ollama Error: {response.text}")
     response.raise_for_status()
     data = response.json()
     return data.get("response", "").strip()
