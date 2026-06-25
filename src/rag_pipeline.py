@@ -171,7 +171,7 @@ class RAGPipeline:
             "options": {"temperature": 0.2},
         }
         t0 = time.perf_counter()
-        response = requests.post(url, json=payload, timeout=120)
+        response = requests.post(url, json=payload, timeout=300)
         generate_s = round(time.perf_counter() - t0, 3)
 
         if response.status_code != 200:
